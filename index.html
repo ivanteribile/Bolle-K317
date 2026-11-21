@@ -161,6 +161,11 @@ const CFG=window.BK_CONFIG||{},SC='https://www.googleapis.com/auth/drive',API='h
 const ls={get:k=>{try{return localStorage.getItem(k)}catch(e){return null}},set:(k,v)=>{try{localStorage.setItem(k,v)}catch(e){}},del:k=>{try{localStorage.removeItem(k)}catch(e){}}};
 const cid=()=>String(CFG.clientId||ls.get('bk317_cid')||'').trim();
 const G={tok:null,exp:0,tc:null,tcId:'',waits:[],busy:false,prom:null,last:0,email:ls.get('bk317_em')||''};
+try{const h=new URLSearchParams(location.hash.replace(/^#/,'')),st=ls.get('bk317_st');
+  if(st&&h.get('state')===st){ls.del('bk317_st');
+    if(h.get('access_token')){ls.set('bk317_gt',JSON.stringify({t:h.get('access_token'),exp:Date.now()+(+h.get('expires_in')||3600)*1000}));ls.set('bk317_gh','1');G.fromRedir=1}
+    else if(h.get('error'))G.err=h.get('error');
+    history.replaceState(null,'',location.pathname+location.search)}}catch(e){}
 try{const t=JSON.parse(ls.get('bk317_gt')||'null');if(t&&t.t&&t.exp>Date.now()+120000){G.tok=t.t;G.exp=t.exp}}catch(e){}
 const valid=()=>!!G.tok&&Date.now()<G.exp-60000;
 const clone=o=>JSON.parse(JSON.stringify(o));
@@ -171,14 +176,18 @@ function css(){if(document.getElementById('gcss'))return;const s=document.create
   s.textContent='#gbar{position:fixed;left:8px;right:8px;bottom:calc(8px + env(safe-area-inset-bottom));z-index:99999;background:#222;color:#fff;border-radius:14px;padding:10px 12px;display:none;align-items:center;gap:10px;font:14px/1.3 system-ui,sans-serif;box-shadow:0 4px 18px rgba(0,0,0,.35)}#gbar button{background:#E4413A;color:#fff;border:0;border-radius:10px;padding:10px 14px;font:600 14px system-ui,sans-serif;white-space:nowrap}#gbar span{flex:1}#gsu{position:fixed;inset:0;z-index:100000;background:#fff;color:#111;display:none;overflow:auto;padding:22px 18px;font:15px/1.5 system-ui,sans-serif}#gsu h2{margin:0 0 8px;font-size:20px}#gsu p{margin:8px 0}#gsu input{width:100%;box-sizing:border-box;font:14px monospace;padding:12px;border:1px solid #999;border-radius:10px;margin:8px 0}#gsu button{padding:12px 16px;border:0;border-radius:12px;font:600 15px system-ui,sans-serif;background:#E4413A;color:#fff;margin:6px 8px 0 0}#gsu button.s{background:#e6e6e6;color:#111}@media(prefers-color-scheme:dark){#gsu{background:#161616;color:#eee}#gsu input{background:#222;color:#eee;border-color:#555}#gsu button.s{background:#333;color:#eee}}';
   document.head.append(s)}
 function mk(){if(bar||!document.body)return;css();
-  bar=document.createElement('div');bar.id='gbar';bar.innerHTML='<span id="gbt">Accedi a Google per salvare su Drive</span><button id="gbb" type="button">Accedi</button>';document.body.append(bar);
+  bar=document.createElement('div');bar.id='gbar';bar.innerHTML='<span id="gbt">Accedi a Google per salvare su Drive</span><button id="gbr" type="button" style="display:none;background:#555;padding:10px 10px">Altro metodo</button><button id="gbb" type="button">Accedi</button>';document.body.append(bar);
+  document.getElementById('gbr').onclick=redirLogin;
   document.getElementById('gbb').onclick=()=>{gLogin().catch(e=>{if(e&&e.code=='offline')note('Senza rete: riprova quando torna il segnale')})};
   su=document.createElement('div');su.id='gsu';
   su.innerHTML='<h2>Collega Google</h2><p>Per salvare le bolle su Google Drive serve l’<b>ID client</b> creato in Google Cloud. Si fa una volta sola.</p><p>Incollalo qui sotto (finisce con <i>.apps.googleusercontent.com</i>):</p><input id="gsi" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="123456-abc.apps.googleusercontent.com"><div><button id="gss" type="button">Salva e accedi</button><button id="gsl" type="button" class="s">Più tardi</button></div><p style="font-size:13px;opacity:.7">Senza accesso l’app funziona lo stesso, ma salva solo su questo telefono.</p>';
   document.body.append(su);
   document.getElementById('gss').onclick=()=>{const v=document.getElementById('gsi').value.trim();if(!/\.apps\.googleusercontent\.com$/.test(v)){document.getElementById('gsi').style.borderColor='#c0392b';return}ls.set('bk317_cid',v);su.style.display='none';G.tcId='';gLogin().catch(()=>{})};
   document.getElementById('gsl').onclick=()=>{su.style.display='none';G.dismissed=1}}
-function showBar(t){mk();if(!bar)return;if(!navigator.onLine)return;document.getElementById('gbt').textContent=t||'Accedi a Google per salvare su Drive';bar.style.display='flex'}
+function showBar(t,alt){mk();if(!bar)return;if(!navigator.onLine)return;document.getElementById('gbt').textContent=t||'Accedi a Google per salvare su Drive';document.getElementById('gbr').style.display=alt?'':'none';bar.style.display='flex'}
+function redirLogin(){if(!cid()){showSetup();return}const st=Math.random().toString(36).slice(2)+Date.now().toString(36);ls.set('bk317_st',st);
+  const q=new URLSearchParams({client_id:cid(),redirect_uri:location.origin+location.pathname,response_type:'token',scope:SC,include_granted_scopes:'true',state:st});if(G.email)q.set('login_hint',G.email);
+  location.href='https://accounts.google.com/o/oauth2/v2/auth?'+q}
 function hideBar(){if(bar)bar.style.display='none'}
 function showSetup(){mk();if(su&&!G.dismissed){document.getElementById('gsi').value=ls.get('bk317_cid')||'';su.style.display='block'}}
 function note(t){try{msg(t)}catch(e){}}
@@ -191,9 +200,9 @@ function gcl(){if(!(window.google&&google.accounts&&google.accounts.oauth2))retu
   if(!G.tc||G.tcId!==cid()){G.tcId=cid();G.tc=google.accounts.oauth2.initTokenClient({client_id:G.tcId,scope:SC,callback:onTok,error_callback:onErr})}
   return G.tc}
 const ERRT={popup_failed_to_open:'Il browser ha bloccato la finestra di Google. Tocca di nuovo Accedi (se compare “popup bloccato” scegli Consenti).',popup_closed:'Accesso annullato. Tocca Accedi per riprovare.'};
-function onErr(e){const w=G.waits.splice(0);G.busy=false;const t=(e&&e.type)||'unknown';G.err=t;showBar(ERRT[t]||('Accesso non riuscito ('+t+'). Tocca Accedi per riprovare.'));w.forEach(x=>x.rej({code:'needs_reauth',message:t}))}
+function onErr(e){const w=G.waits.splice(0);G.busy=false;const t=(e&&e.type)||'unknown';G.err=t;showBar(ERRT[t]||('Accesso non riuscito ('+t+'). Tocca Accedi per riprovare.'),true);w.forEach(x=>x.rej({code:'needs_reauth',message:t}))}
 function onTok(r){const w=G.waits.splice(0);G.busy=false;
-  if(!r||r.error||!r.access_token){const t=(r&&r.error)||'unknown';G.err=t;showBar(t=='access_denied'?'Google ha negato l’accesso: scegli l’account giusto (deve essere tra gli utenti di prova). Tocca Accedi.':'Accesso non riuscito ('+t+'). Tocca Accedi per riprovare.');w.forEach(x=>x.rej({code:'needs_reauth',message:t}));return}
+  if(!r||r.error||!r.access_token){const t=(r&&r.error)||'unknown';G.err=t;showBar(t=='access_denied'?'Google ha negato l’accesso: scegli l’account giusto (deve essere tra gli utenti di prova). Tocca Accedi.':'Accesso non riuscito ('+t+'). Tocca Accedi per riprovare.',true);w.forEach(x=>x.rej({code:'needs_reauth',message:t}));return}
   G.tok=r.access_token;G.exp=Date.now()+(+r.expires_in||3600)*1000;ls.set('bk317_gt',JSON.stringify({t:G.tok,exp:G.exp}));ls.set('bk317_gh','1');G.err='';hideBar();
   w.forEach(x=>x.res(G.tok));after()}
 /* si chiama dentro il tocco dell'utente: se la libreria di Google è già caricata la finestra si apre subito, senza attese che il browser potrebbe bloccare */
@@ -201,11 +210,13 @@ function gLogin(){if(G.busy&&G.prom&&Date.now()-G.last<8000)return G.prom;
   G.busy=true;G.last=Date.now();G.waits.splice(0).forEach(x=>x.rej({code:'needs_reauth'}));
   G.prom=new Promise((res,rej)=>{
     if(!cid()){G.busy=false;showSetup();return rej({code:'needs_setup'})}
-    const go=()=>{const tc=gcl();if(!tc){G.busy=false;showBar('Non riesco a raggiungere Google. Controlla la rete e tocca Accedi.');return rej({code:'offline'})}
+    const fail=(e,w)=>{if(w)G.waits.splice(0);G.busy=false;const d=String(e&&(e.message||e.name)||e||'errore').replace(/\s+/g,' ').slice(0,90);G.err=d;showBar('Accesso non riuscito: '+d+'. Tocca Accedi per riprovare.',true);rej({code:'needs_reauth',message:d})};
+    const go=()=>{let tc=null;try{tc=gcl()}catch(e){return fail(e)}
+      if(!tc){G.busy=false;showBar('Non riesco a raggiungere Google. Controlla la rete e tocca Accedi.',true);return rej({code:'offline'})}
       G.waits.push({res,rej});
-      try{tc.requestAccessToken(G.email?{hint:G.email}:{})}catch(e){G.waits.splice(0);G.busy=false;G.err='errore';showBar('Accesso non riuscito (errore). Tocca Accedi per riprovare.');rej({code:'needs_reauth'})}};
+      try{tc.requestAccessToken(G.email?{hint:G.email}:{})}catch(e){fail(e,1)}};
     if(window.google&&google.accounts&&google.accounts.oauth2)go();
-    else gsi().then(go).catch(()=>{G.busy=false;showBar('Non riesco a raggiungere Google. Controlla la rete e tocca Accedi.');rej({code:'offline'})})});
+    else gsi().then(go).catch(()=>{G.busy=false;showBar('Non riesco a raggiungere Google. Controlla la rete e tocca Accedi.',true);rej({code:'offline'})})});
   G.prom.catch(()=>{});return G.prom}
 async function after(){
   try{const r=await dapi('/drive/v3/about?fields=user(emailAddress)');const j=await r.json();const em=j&&j.user&&j.user.emailAddress;if(em){G.email=em;ls.set('bk317_em',em)}}catch(e){}
@@ -319,9 +330,9 @@ const DL={save:async o=>{const d=o.data,u=URL.createObjectURL(d instanceof Blob?
 window.claude={use:async n=>n==='mcp'?MCP:n==='db'?DB:n==='downloads'?DL:null};
 window.BK_AUTH={login:gLogin,valid,state:()=>({valid:valid(),cid:!!cid(),email:G.email,err:G.err||''}),cols:()=>[...COLS.entries()].map(([n,c])=>({n,docs:Object.keys(c.docs).length,rem:c.rem,sy:c.sy,dirty:c.dirty,subs:c.subs.length,err:c.err})),syncNow:()=>Promise.all([...COLS.values()].map(c=>c.sync()))};
 try{if(navigator.storage&&navigator.storage.persist)navigator.storage.persist()}catch(e){}
-document.addEventListener('DOMContentLoaded',()=>{mk();if(navigator.onLine)gsi().then(()=>{if(cid())gcl()}).catch(()=>{});
+document.addEventListener('DOMContentLoaded',()=>{mk();if(G.fromRedir&&valid())after();else if(G.err&&!valid())showBar('Accesso non riuscito ('+G.err+'). Tocca Accedi per riprovare.',true);if(navigator.onLine)gsi().then(()=>{if(cid())gcl()}).catch(()=>{});
   if(!cid()){if(!ls.get('bk317_ns')){ls.set('bk317_ns','1');showSetup()}}
-  else if(!valid())setTimeout(()=>{if(!valid())needLogin()},1500)});
+  else if(!valid())setTimeout(()=>{if(!valid()&&!(G.err&&bar&&bar.style.display=='flex'))needLogin()},1500)});
 })();
 
 </script>
