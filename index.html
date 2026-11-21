@@ -187,18 +187,25 @@ function needLogin(){if(!cid()){showSetup();return}showBar(ls.get('bk317_gh')?'T
 /* ---------- accesso Google (Google Identity Services, token a vita breve) ---------- */
 let gsiP=null;
 const gsi=()=>gsiP||(gsiP=new Promise((res,rej)=>{if(window.google&&google.accounts&&google.accounts.oauth2)return res();const s=document.createElement('script');s.src='https://accounts.google.com/gsi/client';s.async=true;s.onload=()=>res();s.onerror=()=>{gsiP=null;rej(new Error('gsi'))};document.head.append(s)}));
+function gcl(){if(!(window.google&&google.accounts&&google.accounts.oauth2))return null;
+  if(!G.tc||G.tcId!==cid()){G.tcId=cid();G.tc=google.accounts.oauth2.initTokenClient({client_id:G.tcId,scope:SC,callback:onTok,error_callback:onErr})}
+  return G.tc}
+const ERRT={popup_failed_to_open:'Il browser ha bloccato la finestra di Google. Tocca di nuovo Accedi (se compare “popup bloccato” scegli Consenti).',popup_closed:'Accesso annullato. Tocca Accedi per riprovare.'};
+function onErr(e){const w=G.waits.splice(0);G.busy=false;const t=(e&&e.type)||'unknown';G.err=t;showBar(ERRT[t]||('Accesso non riuscito ('+t+'). Tocca Accedi per riprovare.'));w.forEach(x=>x.rej({code:'needs_reauth',message:t}))}
 function onTok(r){const w=G.waits.splice(0);G.busy=false;
-  if(!r||r.error||!r.access_token){w.forEach(x=>x.rej({code:'needs_reauth',message:r&&r.error}));return}
-  G.tok=r.access_token;G.exp=Date.now()+(+r.expires_in||3600)*1000;ls.set('bk317_gt',JSON.stringify({t:G.tok,exp:G.exp}));ls.set('bk317_gh','1');hideBar();
+  if(!r||r.error||!r.access_token){const t=(r&&r.error)||'unknown';G.err=t;showBar(t=='access_denied'?'Google ha negato l’accesso: scegli l’account giusto (deve essere tra gli utenti di prova). Tocca Accedi.':'Accesso non riuscito ('+t+'). Tocca Accedi per riprovare.');w.forEach(x=>x.rej({code:'needs_reauth',message:t}));return}
+  G.tok=r.access_token;G.exp=Date.now()+(+r.expires_in||3600)*1000;ls.set('bk317_gt',JSON.stringify({t:G.tok,exp:G.exp}));ls.set('bk317_gh','1');G.err='';hideBar();
   w.forEach(x=>x.res(G.tok));after()}
-function gLogin(){if(G.busy&&G.prom)return G.prom;G.busy=true;G.last=Date.now();
+/* si chiama dentro il tocco dell'utente: se la libreria di Google è già caricata la finestra si apre subito, senza attese che il browser potrebbe bloccare */
+function gLogin(){if(G.busy&&G.prom&&Date.now()-G.last<8000)return G.prom;
+  G.busy=true;G.last=Date.now();G.waits.splice(0).forEach(x=>x.rej({code:'needs_reauth'}));
   G.prom=new Promise((res,rej)=>{
     if(!cid()){G.busy=false;showSetup();return rej({code:'needs_setup'})}
-    gsi().then(()=>{
-      if(!G.tc||G.tcId!==cid()){G.tcId=cid();G.tc=google.accounts.oauth2.initTokenClient({client_id:G.tcId,scope:SC,callback:onTok,error_callback:e=>{const w=G.waits.splice(0);G.busy=false;w.forEach(x=>x.rej({code:'needs_reauth',message:e&&e.type}))}})}
+    const go=()=>{const tc=gcl();if(!tc){G.busy=false;showBar('Non riesco a raggiungere Google. Controlla la rete e tocca Accedi.');return rej({code:'offline'})}
       G.waits.push({res,rej});
-      try{G.tc.requestAccessToken(G.email?{hint:G.email}:{})}catch(e){G.waits.splice(0);G.busy=false;rej({code:'needs_reauth'})}
-    }).catch(()=>{G.busy=false;rej({code:'offline'})})});
+      try{tc.requestAccessToken(G.email?{hint:G.email}:{})}catch(e){G.waits.splice(0);G.busy=false;G.err='errore';showBar('Accesso non riuscito (errore). Tocca Accedi per riprovare.');rej({code:'needs_reauth'})}};
+    if(window.google&&google.accounts&&google.accounts.oauth2)go();
+    else gsi().then(go).catch(()=>{G.busy=false;showBar('Non riesco a raggiungere Google. Controlla la rete e tocca Accedi.');rej({code:'offline'})})});
   G.prom.catch(()=>{});return G.prom}
 async function after(){
   try{const r=await dapi('/drive/v3/about?fields=user(emailAddress)');const j=await r.json();const em=j&&j.user&&j.user.emailAddress;if(em){G.email=em;ls.set('bk317_em',em)}}catch(e){}
@@ -310,9 +317,9 @@ window.addEventListener('online',()=>{if(valid())syncAll(500)});
 const DL={save:async o=>{const d=o.data,u=URL.createObjectURL(d instanceof Blob?d:new Blob([d])),a=document.createElement('a');a.href=u;a.download=o.filename;document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(u),60000)}};
 
 window.claude={use:async n=>n==='mcp'?MCP:n==='db'?DB:n==='downloads'?DL:null};
-window.BK_AUTH={login:gLogin,valid,state:()=>({valid:valid(),cid:!!cid(),email:G.email}),cols:()=>[...COLS.entries()].map(([n,c])=>({n,docs:Object.keys(c.docs).length,rem:c.rem,sy:c.sy,dirty:c.dirty,subs:c.subs.length,err:c.err})),syncNow:()=>Promise.all([...COLS.values()].map(c=>c.sync()))};
+window.BK_AUTH={login:gLogin,valid,state:()=>({valid:valid(),cid:!!cid(),email:G.email,err:G.err||''}),cols:()=>[...COLS.entries()].map(([n,c])=>({n,docs:Object.keys(c.docs).length,rem:c.rem,sy:c.sy,dirty:c.dirty,subs:c.subs.length,err:c.err})),syncNow:()=>Promise.all([...COLS.values()].map(c=>c.sync()))};
 try{if(navigator.storage&&navigator.storage.persist)navigator.storage.persist()}catch(e){}
-document.addEventListener('DOMContentLoaded',()=>{mk();
+document.addEventListener('DOMContentLoaded',()=>{mk();if(navigator.onLine)gsi().then(()=>{if(cid())gcl()}).catch(()=>{});
   if(!cid()){if(!ls.get('bk317_ns')){ls.set('bk317_ns','1');showSetup()}}
   else if(!valid())setTimeout(()=>{if(!valid())needLogin()},1500)});
 })();
