@@ -327,10 +327,24 @@ window.addEventListener('online',()=>{if(valid())syncAll(500)});
 /* ---------- salvataggio file sul telefono ---------- */
 const DL={save:async o=>{const d=o.data,u=URL.createObjectURL(d instanceof Blob?d:new Blob([d])),a=document.createElement('a');a.href=u;a.download=o.filename;document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(u),60000)}};
 
+/* ---------- ripristino dall'ultima copia di sicurezza salvata su Drive (cartella "Backup") ---------- */
+async function latestBackup(){
+  const root=(typeof ROOT!=='undefined')?ROOT:'';if(!root)return null;
+  const f=await (await dapi('/drive/v3/files?'+new URLSearchParams({q:"'"+root+"' in parents and name='Backup' and mimeType='"+MIME_F+"' and trashed=false",fields:'files(id)',pageSize:'5'}))).json();
+  if(!f.files||!f.files[0])return null;
+  const l=await (await dapi('/drive/v3/files?'+new URLSearchParams({q:"'"+f.files[0].id+"' in parents and mimeType!='"+MIME_F+"' and trashed=false",fields:'files(id,name,modifiedTime)',pageSize:'10',orderBy:'modifiedTime desc'}))).json();
+  for(const x of (l.files||[])){try{const o=JSON.parse(await (await dapi('/drive/v3/files/'+x.id+'?alt=media')).text());if(o&&o.v===1&&o.S&&o.REG){o.__name=x.name;return o}}catch(e){}}
+  return null}
+function mkRestore(){const lab=document.getElementById('bur')&&document.getElementById('bur').parentElement;if(!lab||document.getElementById('bdr'))return;
+  const b=document.createElement('button');b.id='bdr';b.type='button';b.className='fb';b.style.cssText='display:block;width:100%;margin-top:10px;text-align:center';b.textContent='Ripristina dall’ultima copia su Drive';lab.after(b);
+  b.onclick=async()=>{if(!valid()){try{await gLogin()}catch(e){note('Accedi prima a Google');return}}
+    note('Cerco la copia su Drive…');let o=null;try{o=await latestBackup()}catch(e){note('Non riesco a leggere Drive: riprova');return}
+    if(!o){note('Nessuna copia di sicurezza trovata su Drive');return}
+    if(typeof bkApply==='function')await bkApply(o)}}
 window.claude={use:async n=>n==='mcp'?MCP:n==='db'?DB:n==='downloads'?DL:null};
-window.BK_AUTH={login:gLogin,valid,state:()=>({valid:valid(),cid:!!cid(),email:G.email,err:G.err||''}),cols:()=>[...COLS.entries()].map(([n,c])=>({n,docs:Object.keys(c.docs).length,rem:c.rem,sy:c.sy,dirty:c.dirty,subs:c.subs.length,err:c.err})),syncNow:()=>Promise.all([...COLS.values()].map(c=>c.sync()))};
+window.BK_AUTH={latestBackup,login:gLogin,valid,state:()=>({valid:valid(),cid:!!cid(),email:G.email,err:G.err||''}),cols:()=>[...COLS.entries()].map(([n,c])=>({n,docs:Object.keys(c.docs).length,rem:c.rem,sy:c.sy,dirty:c.dirty,subs:c.subs.length,err:c.err})),syncNow:()=>Promise.all([...COLS.values()].map(c=>c.sync()))};
 try{if(navigator.storage&&navigator.storage.persist)navigator.storage.persist()}catch(e){}
-document.addEventListener('DOMContentLoaded',()=>{mk();if(G.fromRedir&&valid())after();else if(G.err&&!valid())showBar('Accesso non riuscito ('+G.err+'). Tocca Accedi per riprovare.',true);if(navigator.onLine)gsi().then(()=>{if(cid())gcl()}).catch(()=>{});
+document.addEventListener('DOMContentLoaded',()=>{mk();mkRestore();if(G.fromRedir&&valid())after();else if(G.err&&!valid())showBar('Accesso non riuscito ('+G.err+'). Tocca Accedi per riprovare.',true);if(navigator.onLine)gsi().then(()=>{if(cid())gcl()}).catch(()=>{});
   if(!cid()){if(!ls.get('bk317_ns')){ls.set('bk317_ns','1');showSetup()}}
   else if(!valid())setTimeout(()=>{if(!valid()&&!(G.err&&bar&&bar.style.display=='flex'))needLogin()},1500)});
 })();
@@ -843,6 +857,7 @@ async function regInit(){
   if(!DBR)return;
   try{ciDbInit()}catch(e){}
   if(!rows.length)DBR.collection('catalogo').onSnapshot(catFromDb,()=>{});
+  else{let cd=0;DBR.collection('catalogo').onSnapshot(s=>{if(!cd&&s.empty&&rows.length){cd=1;catToDb()}},()=>{})}
   DBR.collection('registro').onSnapshot(snap=>{let ch=false;
     const seen=new Set();snap.docs.forEach(x=>{const e=x.data();if(!e||!e.key)return;seen.add(e.key);REG[e.key]=e;const o=S.done[e.id];
       if(!o||(e.dt>(o.dt||''))){S.done[e.id]=Object.assign(o&&o.dr?{dr:o.dr}:{},(e.fn||(o&&o.fn))?{fn:e.fn||o.fn}:{},{es:e.es,iv:e.iv,nt:e.nt,dt:e.dt});ch=true}});
@@ -1011,10 +1026,12 @@ $('buf').onclick=async()=>{const blob=new Blob([JSON.stringify(bkData())],{type:
   saveLocal(fn,blob,'File creato ✓');S.lb=today();save();bkSt()};
 $('bur').onchange=async e=>{const f=e.target.files[0];e.target.value='';if(!f)return;let o;try{o=JSON.parse(await f.text())}catch(x){msg('File non valido');return}
   if(!o||o.v!==1||!o.S||!o.REG){msg('Non è una copia di sicurezza di questa app');return}
+  await bkApply(o)};
+async function bkApply(o){
   const od=o.S.done||{};Object.keys(od).forEach(id=>{const c=S.done[id];if(!c||(od[id].dt||'')>(c.dt||''))S.done[id]=od[id]});
   Object.keys(o.S).forEach(k=>{if(['done','reg','lb'].includes(k))return;if(Array.isArray(o.S[k])){const cur=Array.isArray(S[k])?S[k]:[];if(k=='ci'){o.S.ci.forEach(c=>{if(c&&!cur.some(x=>x&&x.id==c.id))cur.push(c)})}else{const seen=new Set(cur.map(x=>JSON.stringify(x)));o.S[k].forEach(x=>{const j=JSON.stringify(x);if(!seen.has(j)){seen.add(j);cur.push(x)}})}S[k]=cur;return}if(S[k]==null||S[k]===''||typeof S[k]=='object')S[k]=typeof S[k]=='object'&&S[k]&&typeof o.S[k]=='object'?Object.assign({},o.S[k],S[k]):o.S[k]});if(o.CAT&&o.CAT.f){CAT.f=o.CAT.f;CAT.d=o.CAT.d;saveCat()}
   for(const x of o.REG){REG[x.key]=x;if(DBR){try{await DBR.collection('registro').doc(x.key).set(JSON.parse(JSON.stringify(x)))}catch(z){}}else{S.reg=S.reg||{};S.reg[x.key]=x}}
-  save();buildRows();setFilters();list();sig();msg('Ripristino completato ✓')};
+  save();buildRows();setFilters();list();sig();try{catToDb()}catch(e){}msg('Ripristino completato ✓')}
 /* 6. Più tecnici */
 S.T=S.T||{};if(S.tec&&S.s1&&!S.T[S.tec])S.T[S.tec]=S.s1;
 function tsel(){const n=Object.keys(S.T);if(S.tec&&!n.includes(S.tec))n.push(S.tec);$('tsel').innerHTML=n.map(x=>`<option value="${esc2(x)}">${esc2(x)}</option>`).join('')||'<option value="">—</option>';$('tsel').value=S.tec||''}
